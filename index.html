@@ -728,6 +728,67 @@ schoolToggle.onclick = () => {
 document.getElementById('dLegend').appendChild(schoolToggle);
 
 
+// ═══ ПИЛОТ: 5 МОДУЛЬНЫХ ПРИСТРОЕК (350 млн ₽) ═══
+const pilotSchools = [
+  {name:"Школа №75", district:"Суворовский", lat:47.331091, lon:39.691025,
+   load:"4 800 учеников при норме 1 200 (×4 нормы)",
+   why:"Самая перегруженная школа города"},
+  {name:"Школа №115", district:"Левенцовский", lat:47.233767, lon:39.597353,
+   load:"Западный массив новой застройки, 2-я смена",
+   why:"Зона активной массовой застройки"},
+  {name:"Школа №116", district:"Левобережный", lat:47.208341, lon:39.754520,
+   load:"Единственная школа южного берега",
+   why:"Зона КРТ — рост населения опережает соцобъекты"},
+  {name:"Школа №113", district:"Восточный (Темерник)", lat:47.282018, lon:39.809874,
+   load:"Северо-восточный массив, перегрузка >130%",
+   why:"Стихийная застройка без школ"},
+  {name:"Школа №106", district:"Александровка/Сельмаш", lat:47.241884, lon:39.828305,
+   load:"Восточная зона перехода промки в жилую",
+   why:"Дефицит школ при росте жилого фонда"}
+];
+
+const pilotLayer = L.layerGroup().addTo(map);
+
+pilotSchools.forEach((s, i) => {
+  const icon = L.divIcon({
+    html:'<div style="width:34px;height:34px;background:#BF360C;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-family:Montserrat,sans-serif;font-size:14px;">'+(i+1)+'</div>',
+    iconSize:[34,34], iconAnchor:[17,17], className:''
+  });
+  const m = L.marker([s.lat, s.lon], {icon, zIndexOffset:1000}).bindPopup(
+    '<div style="font-family:Montserrat,sans-serif;min-width:240px;">' +
+    '<div style="background:#BF360C;color:#fff;padding:6px 10px;font-weight:900;font-size:13px;margin:-9px -9px 8px -9px;">ПИЛОТ '+(i+1)+'/5 · МОДУЛЬНАЯ ПРИСТРОЙКА</div>' +
+    '<div style="font-weight:800;font-size:14px;color:#000;margin-bottom:4px;">' + s.name + '</div>' +
+    '<div style="font-size:11px;color:#666;margin-bottom:6px;">' + s.district + '</div>' +
+    '<div style="font-size:11px;color:#000;margin-bottom:6px;"><b>Текущая нагрузка:</b> ' + s.load + '</div>' +
+    '<div style="font-size:11px;color:#000;margin-bottom:8px;"><b>Почему пилот:</b> ' + s.why + '</div>' +
+    '<div style="background:#FFF3E0;border-left:3px solid #BF360C;padding:6px 8px;font-size:11px;color:#000;"><b>+200 мест · 70 млн ₽ · 6-9 мес</b></div>' +
+    '</div>',
+    {maxWidth:300}
+  );
+  pilotLayer.addLayer(m);
+});
+
+const pilotToggle = document.createElement('div');
+pilotToggle.className = 'dl-item';
+pilotToggle.style.background = 'rgba(191,54,12,0.18)';
+pilotToggle.style.cursor = 'pointer';
+pilotToggle.style.borderLeft = '3px solid #BF360C';
+pilotToggle.innerHTML = '<span class="dl-swatch" style="background:#BF360C"></span><b>ПИЛОТ: 5 модульных пристроек (350 млн ₽)</b>';
+pilotToggle.dataset.on = '1';
+pilotToggle.onclick = () => {
+  if (pilotToggle.dataset.on === '1') {
+    map.removeLayer(pilotLayer);
+    pilotToggle.dataset.on = '0';
+    pilotToggle.style.opacity = '0.35';
+  } else {
+    map.addLayer(pilotLayer);
+    pilotToggle.dataset.on = '1';
+    pilotToggle.style.opacity = '1';
+  }
+};
+document.getElementById('dLegend').appendChild(pilotToggle);
+
+
 // ═══ KINDERGARTENS LAYER ═══
 const kindergartens = [
   {name:"Art-Family",lat:47.216029,lon:39.622301,addr:""},
