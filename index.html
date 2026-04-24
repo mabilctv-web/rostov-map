@@ -768,6 +768,83 @@ function _buildZoneLayer(zoneId) {
   };
 });
 
+// ===== Пролетарский: детальная аналитика =====
+const PROL_AVARII = {"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7649606,47.2267807]},"properties":{"label":"21-я линия, 10/16","when":"30.03.2026"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7668527,47.2284591]},"properties":{"label":"25-я линия, 12 лит. А","when":"29.12.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7621761,47.223733]},"properties":{"label":"15-я линия, 75/57","when":"29.12.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7652893,47.2422914]},"properties":{"label":"пр. Шолохова, 128/1","when":"29.12.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7535359,47.2358261]},"properties":{"label":"12-я линия, 78/74","when":"23.07.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7716161,47.2315283]},"properties":{"label":"33-я линия, 5 лит. Б","when":"16.06.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7690124,47.2316302]},"properties":{"label":"Ереванская, 15","when":"16.06.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7710863,47.2251964]},"properties":{"label":"29-я линия, 72/23","when":"06.06.2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7791844,47.2505656]},"properties":{"label":"пр. Шолохова, 125 лит. Е","when":"10.2024"}}]};
+
+const PROL_ZHK = {"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7706559,47.2229603]},"properties":{"name":"ЖК «Берег Дона»","developer":"ГК МСК","info":"2 башни 26 эт.","deadline":"Q3 2028"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7436805,47.2407406]},"properties":{"name":"ЖК «Текучев»","developer":"СМУ-1","info":"3 корпуса 24-25 эт., 1100 кв.","deadline":"конец 2028"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7358438,47.2401871]},"properties":{"name":"ЖК «Панорама на Театральном»","developer":"Donneftestroy","info":"3 корпуса 25 эт.","deadline":"Q3 2026"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7463241,47.2231077]},"properties":{"name":"Клубный дом «Проявление»","developer":"-","info":"камерный бизнес","deadline":"06.2026"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7750628,47.2399558]},"properties":{"name":"ЖК «На Школьной»","developer":"-","info":"1 корпус 23-24 эт.","deadline":"Q2 2025"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.747602,47.2329896]},"properties":{"name":"ЖК «На Каяни 20б»","developer":"Сигма","info":"4 корпуса 14 эт.","deadline":"Q3 2026"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.758964,47.221759]},"properties":{"name":"ЖК «Локация 9-11»","developer":"СЗ Магнум","info":"5 корпусов 4 эт.","deadline":"Q4 2026"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7766292,47.2388192]},"properties":{"name":"ЖК «Эталон»","developer":"РСК-Дом","info":"1 корпус 19-20 эт.","deadline":"сдан"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.7506205,47.2243862]},"properties":{"name":"ЖК «Театрал/Театральный»","developer":"СК Интерстрой","info":"21 эт., 177 кв.","deadline":"—"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.8258345,47.2389257]},"properties":{"name":"ЖК «Сокол Градъ»","developer":"-","info":"8 корпусов 17-19 эт., рядом лесопарк 18 га","deadline":"—"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[39.8305793,47.2399072]},"properties":{"name":"ЖК «Сиреневый квартал»","developer":"-","info":"14 секций 10 эт., комфорт+","deadline":"—"}}]};
+
+// 5 свободных территорий — приблизительные контуры по координатным ориентирам.
+// Источники: КРТ-постановления Минстроя РО, Антенное поле (~11 га, пр. 40-летия Победы 111),
+// КРТ 40-я линия/Черевичкина (5,3 га, заморожен из-за СЗЗ), набережная Дона восточнее Зелёного острова,
+// промплощадка винзавода у ул. Каяни, полоса вдоль Александровской рощи.
+const PROL_FREE_LAND = {"type":"FeatureCollection","features":[
+  {"type":"Feature","properties":{"name":"КРТ «Антенное поле»","area":"~11 га","info":"пр. 40-летия Победы, 111. Освобождено от военной АТС, потенциал жилья + соц-объектов."},"geometry":{"type":"Polygon","coordinates":[[[39.8115,47.2235],[39.8198,47.2235],[39.8198,47.2298],[39.8115,47.2298],[39.8115,47.2235]]]}},
+  {"type":"Feature","properties":{"name":"КРТ 40-я линия / Черевичкина","area":"~5,3 га","info":"Замороженная площадка КРТ — освобождать СЗЗ ЭМЗ, потенциал среднеэтажки."},"geometry":{"type":"Polygon","coordinates":[[[39.7748,47.2330],[39.7818,47.2330],[39.7818,47.2374],[39.7748,47.2374],[39.7748,47.2330]]]}},
+  {"type":"Feature","properties":{"name":"Набережная Дона (восточнее Зелёного острова)","area":"~30 га","info":"Полоса промзаны и пустырей вдоль Дона — потенциал общественного пространства и набережной."},"geometry":{"type":"Polygon","coordinates":[[[39.7700,47.2110],[39.8150,47.2110],[39.8150,47.2168],[39.7700,47.2168],[39.7700,47.2110]]]}},
+  {"type":"Feature","properties":{"name":"Винзавод / ул. Каяни","area":"~5 га","info":"Бывшая промплощадка, частично используется. Подходит для лофт-редевелопмента."},"geometry":{"type":"Polygon","coordinates":[[[39.7440,47.2317],[39.7510,47.2317],[39.7510,47.2360],[39.7440,47.2360],[39.7440,47.2317]]]}},
+  {"type":"Feature","properties":{"name":"Александровская роща (полоса под РЗТ)","area":"~7 га","info":"Резерв вдоль Александровской рощи, рассматривается под малоэтажку с парковой буферкой."},"geometry":{"type":"Polygon","coordinates":[[[39.8320,47.2290],[39.8420,47.2290],[39.8420,47.2380],[39.8320,47.2380],[39.8320,47.2290]]]}}
+]};
+
+LAYERS.prol_avarii = {
+  count: PROL_AVARII.features.length,
+  _layer: null,
+  build() {
+    return L.geoJSON(PROL_AVARII, {
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
+        radius: 6.5, fillColor: '#C0392B', color: '#FFFFFF',
+        weight: 1.8, opacity: 1, fillOpacity: 0.95
+      }),
+      onEachFeature: (f, lyr) => {
+        const p = f.properties;
+        const chip = '<div class="type-chip" style="background:#F2DADA;color:#7A2A2A">АВАРИЙНОЕ • ' + (p.when||'') + '</div>';
+        lyr.bindPopup(chip + '<strong>' + p.label + '</strong>', { className: 'school-popup' });
+      }
+    });
+  },
+  show() { if (!this._layer) this._layer = this.build(); this._layer.addTo(map); this._layer.bringToFront(); },
+  hide() { if (this._layer) map.removeLayer(this._layer); }
+};
+
+LAYERS.prol_zhk = {
+  count: PROL_ZHK.features.length,
+  _layer: null,
+  build() {
+    return L.geoJSON(PROL_ZHK, {
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
+        radius: 6.5, fillColor: '#2980B9', color: '#FFFFFF',
+        weight: 1.8, opacity: 1, fillOpacity: 0.95
+      }),
+      onEachFeature: (f, lyr) => {
+        const p = f.properties;
+        const chip = '<div class="type-chip" style="background:#D6E8F2;color:#1B4F72">ЖК • ' + (p.deadline||'—') + '</div>';
+        const dev = p.developer && p.developer !== '-' ? '<div class="dev">' + p.developer + '</div>' : '';
+        const info = p.info ? '<div class="addr">' + p.info + '</div>' : '';
+        lyr.bindPopup(chip + '<strong>' + p.name + '</strong>' + info + dev, { className: 'school-popup' });
+      }
+    });
+  },
+  show() { if (!this._layer) this._layer = this.build(); this._layer.addTo(map); this._layer.bringToFront(); },
+  hide() { if (this._layer) map.removeLayer(this._layer); }
+};
+
+LAYERS.prol_free_land = {
+  count: PROL_FREE_LAND.features.length,
+  _layer: null,
+  build() {
+    return L.geoJSON(PROL_FREE_LAND, {
+      style: { color: '#1E7D3A', weight: 2.5, fillColor: '#27AE60', fillOpacity: 0.22, dashArray: '6,4' },
+      onEachFeature: (f, lyr) => {
+        const p = f.properties;
+        const chip = '<div class="type-chip" style="background:#D5EFDD;color:#1E7D3A">СВОБОДНАЯ ТЕРРИТОРИЯ • ' + (p.area||'') + '</div>';
+        const info = p.info ? '<div class="addr">' + p.info + '</div>' : '';
+        lyr.bindPopup(chip + '<strong>' + p.name + '</strong>' + info, { className: 'school-popup' });
+      }
+    });
+  },
+  show() { if (!this._layer) this._layer = this.build(); this._layer.addTo(map); },
+  hide() { if (this._layer) map.removeLayer(this._layer); }
+};
+
 // ===== Sidebar rendering =====
 const panel = document.getElementById('panel');
 
@@ -791,6 +868,22 @@ heatSection.innerHTML = `
     <input type="checkbox" class="layer-checkbox" data-layer="zone_proletarsky" checked>
     <span class="heat-swatch" style="background:#9B59B6;border:2px solid #9B59B6"></span>
     <span style="flex:1">Пролетарский район</span>
+  </label>
+  <div class="heat-section-title" style="margin-top:10px">Пролетарский: детальные слои</div>
+  <label class="heat-item">
+    <input type="checkbox" class="layer-checkbox" data-layer="prol_avarii">
+    <span class="heat-swatch" style="background:#C0392B;border:2px solid #C0392B"></span>
+    <span style="flex:1">Аварийные дома (${PROL_AVARII.features.length})</span>
+  </label>
+  <label class="heat-item">
+    <input type="checkbox" class="layer-checkbox" data-layer="prol_zhk">
+    <span class="heat-swatch" style="background:#2980B9;border:2px solid #2980B9"></span>
+    <span style="flex:1">Строящиеся / новые ЖК (${PROL_ZHK.features.length})</span>
+  </label>
+  <label class="heat-item">
+    <input type="checkbox" class="layer-checkbox" data-layer="prol_free_land">
+    <span class="heat-swatch" style="background:#27AE60;border:2px dashed #1E7D3A"></span>
+    <span style="flex:1">Свободные территории (${PROL_FREE_LAND.features.length})</span>
   </label>
 `;
 panel.appendChild(heatSection);
