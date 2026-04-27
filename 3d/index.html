@@ -156,20 +156,25 @@ Promise.all([
     if (!r.ok) throw new Error('fetch prol_data: ' + r.status);
     return r.json();
   }),
+  fetch('data/extra_data.json').then(r => {
+    if (!r.ok) throw new Error('fetch extra_data: ' + r.status);
+    return r.json();
+  }),
+  fetch('data/park_design.json').then(r => r.ok ? r.json() : null).catch(() => null),
   mapReady
-]).then(([D]) => {
+]).then(([D, E, P]) => {
   console.log('[boot] map+data ready, features:', {
     schools: D.schools && D.schools.features.length,
-    avariynyi: D.avariynyi && D.avariynyi.features.length,
-    free_land: D.free_land && D.free_land.features.length
+    extra_keys: Object.keys(E).length,
+    park_design: P ? Object.keys(P) : 'absent'
   });
-  initLayers(D);
+  initLayers(D, E, P);
 }).catch(e => console.error('[boot] fail:', e));
 
 // ================== LAYERS ==================
 const LAYERS = {};   // {id: {label, color, group, build, visible, count}}
 
-function initLayers(D) {
+function initLayers(D, E, P) {
   console.log('[init] data loaded, building layers');
   // районы — границы всех + заливка Пролетарского
   map.addSource('districts', { type: 'geojson', data: D.districts });
@@ -212,13 +217,6 @@ function initLayers(D) {
   // снос
   registerGeoJsonFill('demolish', D.demolish,
     { label: 'Под снос', color: '#C62828', group: 'Мастер-план', visible: false });
-  // новое жильё
-  registerGeoJsonPoint('new_housing', D.new_housing,
-    { label: 'Проект: новое жильё', color: '#1565C0', group: 'Мастер-план', visible: false, radius: 6 });
-  // новые соцобъекты
-  registerGeoJsonPoint('new_soc', D.new_soc,
-    { label: 'Проект: новые соцобъекты', color: '#EF6C00', group: 'Мастер-план', visible: false, radius: 7 });
-
   // соц
   registerGeoJsonPoint('schools', D.schools,
     { label: 'Школы', color: '#E91E63', group: 'Социальная сфера', visible: false, radius: 5 });
@@ -235,9 +233,16 @@ function initLayers(D) {
   registerGeoJsonPoint('avariynyi', D.avariynyi,
     { label: 'Аварийный фонд', color: '#8E0E1A', group: 'Застройка', visible: true, radius: 4 });
 
+  // ===== Доп. слои всех 9 блоков (по всему Ростову) =====
+  if (E) registerExtraLayers(E);
+
   // Заполняем зону "СТ Красный Аксай-4" плитками парка
   try { generateParkTiles(D); }
   catch (e) { console.error('park tiles error:', e); }
+
+  // ===== Благоустройство парка СТ Красный Аксай-4 =====
+  // (регистрируется ПОСЛЕ generateParkTiles, чтобы аллея/зоны легли поверх зелёной заливки)
+  if (P) registerParkDesignLayers(P);
 
   // Сначала строим UI и попапы, потом — тяжёлый 3D слой.
   // Так UI отрисуется даже если что-то упадёт в 3D.
@@ -397,18 +402,252 @@ function registerGeoJsonFill(id, data, opts) {
 function registerGeoJsonPoint(id, data, opts) {
   if (!data || !data.features || !data.features.length) return;
   map.addSource(id, { type: 'geojson', data });
-  map.addLayer({
+  const layerDef = {
     id: id + '-circle', type: 'circle', source: id,
     paint: {
       'circle-radius': opts.radius || 5,
-      'circle-color': opts.color,
+      'circle-color': opts.colorExpr || opts.color,
       'circle-stroke-color': '#fff',
       'circle-stroke-width': 1.2,
       'circle-opacity': 0.92
     },
     layout: { visibility: opts.visible ? 'visible' : 'none' }
+  };
+  if (opts.filter) layerDef.filter = opts.filter;
+  map.addLayer(layerDef);
+  // Сколько фич реально пройдёт через filter (если он есть)
+  let count = data.features.length;
+  if (opts.filterCount !== undefined) count = opts.filterCount;
+  LAYERS[id] = { ...opts, count, mlIds: [id + '-circle'] };
+}
+
+function registerGeoJsonLine(id, data, opts) {
+  if (!data || !data.features || !data.features.length) return;
+  map.addSource(id, { type: 'geojson', data });
+  map.addLayer({
+    id: id + '-line', type: 'line', source: id,
+    paint: {
+      'line-color': opts.color,
+      'line-width': opts.width || 3,
+      'line-opacity': opts.opacity != null ? opts.opacity : 0.85,
+      'line-dasharray': opts.dash ? [3, 2] : [1, 0]
+    },
+    layout: { visibility: opts.visible ? 'visible' : 'none', 'line-cap': 'round' }
   });
-  LAYERS[id] = { ...opts, count: data.features.length, mlIds: [id + '-circle'] };
+  LAYERS[id] = { ...opts, count: data.features.length, mlIds: [id + '-line'] };
+}
+
+function registerExtraLayers(E) {
+  // ===== МСП и Инновации (one source, two filters by kind) =====
+  if (E.msp_innovation_full) {
+    const feats = E.msp_innovation_full.features;
+    const mspCount = feats.filter(f => f.properties.kind === 'msp').length;
+    const innCount = feats.filter(f => f.properties.kind === 'innovation').length;
+    // Регистрируем дважды через source-id трюк: создаём два GeoJSON FC
+    const mspFC = { type: 'FeatureCollection', features: feats.filter(f => f.properties.kind === 'msp') };
+    const innFC = { type: 'FeatureCollection', features: feats.filter(f => f.properties.kind === 'innovation') };
+    registerGeoJsonPoint('msp_centres', mspFC,
+      { label: 'Центры поддержки МСП', color: '#D98B1F', group: 'МСП', visible: false, radius: 5 });
+    registerGeoJsonPoint('innovation_centres', innFC,
+      { label: 'Центры инноваций', color: '#3A78AC', group: 'Инновации', visible: false, radius: 5 });
+  }
+
+  // ===== Цифровизация =====
+  if (E.digital_weak_circles) registerGeoJsonPoint('digital_weak_circles', E.digital_weak_circles,
+    { label: 'Зоны слабой цифровой связности', color: '#DC143C', group: 'Цифровизация', visible: false, radius: 7 });
+  if (E.digital_weak_corridor) registerGeoJsonLine('digital_weak_corridor', E.digital_weak_corridor,
+    { label: 'Коридор пр. 40-летия Победы', color: '#DC143C', group: 'Цифровизация', visible: false, width: 4, dash: true });
+
+  // ===== Культура =====
+  const cultDefs = [
+    ['cult_theater',  'Театры / филармония / ДК',     '#8E24AA', 6],
+    ['cult_museum',   'Музеи и выставки',              '#1976D2', 5],
+    ['cult_library',  'Библиотеки',                    '#A1887F', 4],
+    ['cult_dshi',     'Детские школы искусств',        '#FF7043', 4],
+    ['cult_monument', 'Памятники / ОКН',               '#6D4C41', 5],
+    ['cult_park',     'Парки культуры / мемориалы',    '#43A047', 5],
+    ['cult_vuz',      'Вузы — культурные среды',       '#0277BD', 6],
+    ['cult_kluster',  'Креативные кластеры',           '#EC407A', 6],
+  ];
+  for (const [k, label, color, r] of cultDefs) {
+    if (E[k]) registerGeoJsonPoint(k, E[k],
+      { label, color, group: 'Культура', visible: false, radius: r });
+  }
+  if (E.cult_streets) registerGeoJsonLine('cult_streets', E.cult_streets,
+    { label: 'Туристические улицы', color: '#FFC107', group: 'Культура', visible: false, width: 4, opacity: 0.7 });
+
+  // ===== Мобильность =====
+  if (E.bad_streets) registerGeoJsonLine('bad_streets', E.bad_streets,
+    { label: 'Улицы в ненорматив. состоянии', color: '#C8322A', group: 'Мобильность', visible: false, width: 3 });
+  if (E.bike_paths) registerGeoJsonLine('bike_paths', E.bike_paths,
+    { label: 'Велодорожки', color: '#2E7D32', group: 'Мобильность', visible: false, width: 3 });
+  if (E.proj_bike_aleks) registerGeoJsonLine('proj_bike_aleks', E.proj_bike_aleks,
+    { label: 'ПРОЕКТ: велосеть Александровская роща', color: '#FB8C00', group: 'Мобильность', visible: false, width: 3, dash: true });
+
+  // ===== Производства =====
+  if (E.proizv_active) registerGeoJsonPoint('proizv_active', E.proizv_active,
+    { label: 'Действующие производства', color: '#6D4C41', group: 'Производства', visible: false, radius: 5 });
+  if (E.proizv_eco) registerGeoJsonPoint('proizv_eco', E.proizv_eco,
+    { label: 'Экологически значимые', color: '#E64A19', group: 'Производства', visible: false, radius: 6 });
+
+  // ===== Инженерная инфраструктура — цвет по типу =====
+  if (E.engineer_nodes) {
+    registerGeoJsonPoint('engineer_nodes', E.engineer_nodes,
+      { label: 'Проблемные узлы Пролетарского', color: '#7FA3A8', group: 'Инженерная инфра',
+        visible: false, radius: 7,
+        colorExpr: ['match', ['get', 'type'],
+          'heat', '#E67E22', 'water', '#2980B9', 'elec', '#27AE60', 'road', '#C0392B', '#666']
+      });
+  }
+
+  // ===== Проектная инжен. инфра по кварталу Берберовка =====
+  if (window.INFRA_DRAINS_FC) registerGeoJsonPoint('infra_drains', window.INFRA_DRAINS_FC,
+    { label: 'Дождеприёмники (проект)', color: '#1565C0', group: 'Инженерная инфра', visible: false, radius: 4 });
+  if (window.INFRA_TRASH_FC) registerGeoJsonPoint('infra_trash', window.INFRA_TRASH_FC,
+    { label: 'Мусорные контейнеры (проект)', color: '#212121', group: 'Инженерная инфра', visible: false, radius: 4 });
+  if (window.INFRA_SOLAR_FC) registerGeoJsonPoint('infra_solar', window.INFRA_SOLAR_FC,
+    { label: 'Солнечные панели на крышах', color: '#FDD835', group: 'Инженерная инфра', visible: false, radius: 4 });
+  if (window.INFRA_TOILETS_FC) registerGeoJsonPoint('infra_toilets', window.INFRA_TOILETS_FC,
+    { label: 'Биотуалеты', color: '#D81B60', group: 'Инженерная инфра', visible: false, radius: 5 });
+  if (window.INFRA_TOWER_FC) registerGeoJsonPoint('infra_tower', window.INFRA_TOWER_FC,
+    { label: 'Телеком-вышка (на иннов. центре)', color: '#FF6F00', group: 'Цифровизация', visible: false, radius: 9 });
+
+  // ===== Мобильность проекта =====
+  if (window.INFRA_CROSSWALKS_FC) registerGeoJsonLine('infra_crosswalks', window.INFRA_CROSSWALKS_FC,
+    { label: 'Пешеходные переходы (проект)', color: '#FFFFFF', group: 'Мобильность', visible: false, width: 4 });
+  if (window.INFRA_BIKE_LOOP_FC) registerGeoJsonLine('infra_bike_loop', window.INFRA_BIKE_LOOP_FC,
+    { label: 'Велодорожка-кольцо (проект)', color: '#E53935', group: 'Мобильность', visible: false, width: 3, dash: true });
+  if (window.INFRA_SIDEWALK_FC) registerGeoJsonLine('infra_sidewalk', window.INFRA_SIDEWALK_FC,
+    { label: 'Тротуар по ул. Черевичкина (проект)', color: '#1976D2', group: 'Мобильность', visible: false, width: 5 });
+
+  // ===== Экология =====
+  if (E.ecology_sources) registerGeoJsonPoint('ecology_sources', E.ecology_sources,
+    { label: 'Ключевые источники загрязнения', color: '#5D4037', group: 'Экология', visible: false, radius: 8 });
+  if (E.ecology_zones) {
+    registerGeoJsonPoint('ecology_zones', E.ecology_zones,
+      { label: 'Зоны загрязнения (23 точки)', color: '#DC143C', group: 'Экология',
+        visible: false, radius: 7,
+        colorExpr: ['match', ['get', 'level'],
+          'high', '#DC143C', 'mid', '#F5C518', 'low', '#4CAF50', '#888']
+      });
+  }
+
+  // ===== Водно-зелёный каркас =====
+  const greenDefs = [
+    ['green_parks_dev',    'Парки благоустроенные',     '#2E7D32', 6],
+    ['green_parks_nodev',  'Парки без благоустройства', '#A5D6A7', 6],
+    ['green_skvery_dev',   'Скверы благоустроенные',    '#43A047', 5],
+    ['green_skvery_nodev', 'Скверы без благоустр.',     '#C8E6C9', 5],
+    ['green_forests',      'Городские леса / рощи',     '#1B5E20', 6],
+    ['green_water',        'Водные объекты',            '#0288D1', 6],
+  ];
+  for (const [k, label, color, r] of greenDefs) {
+    if (E[k]) registerGeoJsonPoint(k, E[k],
+      { label, color, group: 'Зелёный каркас', visible: false, radius: r });
+  }
+}
+
+// ================== БЛАГОУСТРОЙСТВО ПАРКА ==================
+function registerParkDesignLayers(P) {
+  const GROUP = 'Парк (благоустройство)';
+  // Цвета по виду объекта (заливки)
+  const FILL_COLOR = ['match', ['get', 'kind'],
+    'pond',                '#1E88E5',
+    'hut',                 '#6D4C41',
+    'playground_slide',    '#FB8C00',
+    'playground_carousel', '#FB8C00',
+    'skate',               '#7E57C2',
+    'workout',             '#388E3C',
+    'picnic',              '#D84315',
+    'service',             '#455A64',
+    'arch',                '#8D6E63',
+    '#999'
+  ];
+  if (P.fills) {
+    map.addSource('park_design_fills', { type: 'geojson', data: P.fills });
+    map.addLayer({
+      id: 'park_design_fills-fill', type: 'fill', source: 'park_design_fills',
+      paint: { 'fill-color': FILL_COLOR, 'fill-opacity': 0.78, 'fill-outline-color': '#222' }
+    });
+    LAYERS['park_design_fills'] = {
+      label: 'Парк: зоны (пруд, площадки, сервис)', color: '#FB8C00',
+      group: GROUP, visible: true, count: P.fills.features.length,
+      mlIds: ['park_design_fills-fill']
+    };
+  }
+  // Линии: главная аллея — широкая белая, боковые — тонкий пунктир, велодорожка — зелёная
+  if (P.lines) {
+    map.addSource('park_design_lines', { type: 'geojson', data: P.lines });
+    // главная аллея
+    map.addLayer({
+      id: 'park_design_lines-main', type: 'line', source: 'park_design_lines',
+      filter: ['==', ['get', 'kind'], 'alley_main'],
+      paint: { 'line-color': '#FFFFFF', 'line-width': 6, 'line-opacity': 0.95 }
+    });
+    // боковые пунктиры
+    map.addLayer({
+      id: 'park_design_lines-side', type: 'line', source: 'park_design_lines',
+      filter: ['==', ['get', 'kind'], 'alley_side'],
+      paint: { 'line-color': '#BDBDBD', 'line-width': 1.5, 'line-dasharray': [2, 2] }
+    });
+    // велодорожка по парку
+    map.addLayer({
+      id: 'park_design_lines-bike', type: 'line', source: 'park_design_lines',
+      filter: ['==', ['get', 'kind'], 'bike_inside'],
+      paint: { 'line-color': '#43A047', 'line-width': 3, 'line-dasharray': [3, 1.5] }
+    });
+    LAYERS['park_design_lines'] = {
+      label: 'Парк: аллея + велодорожка', color: '#FFFFFF',
+      group: GROUP, visible: true, count: P.lines.features.length,
+      mlIds: ['park_design_lines-main','park_design_lines-side','park_design_lines-bike']
+    };
+  }
+  // Точки: подписи + декоративные кружки (рыбы, деревья, лавки)
+  if (P.points) {
+    const POINT_COLOR = ['match', ['get', 'kind'],
+      'pond_dot',   '#FFFFFF',
+      'rest_tree',  '#2E7D32',
+      'rest_bench', '#5D4037',
+      '#FF6F00'
+    ];
+    const POINT_RADIUS = ['match', ['get', 'kind'],
+      'pond_dot',   3,
+      'rest_tree',  4,
+      'rest_bench', 3,
+      6
+    ];
+    map.addSource('park_design_points', { type: 'geojson', data: P.points });
+    map.addLayer({
+      id: 'park_design_points-circle', type: 'circle', source: 'park_design_points',
+      paint: {
+        'circle-radius': POINT_RADIUS,
+        'circle-color': POINT_COLOR,
+        'circle-stroke-color': '#222', 'circle-stroke-width': 0.6
+      }
+    });
+    // Текстовые подписи только для kind, начинающихся на 'label_'
+    map.addLayer({
+      id: 'park_design_points-label', type: 'symbol', source: 'park_design_points',
+      filter: ['==', ['slice', ['get', 'kind'], 0, 6], 'label_'],
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-size': 11,
+        'text-anchor': 'top',
+        'text-offset': [0, 0.7],
+        'text-allow-overlap': false
+      },
+      paint: {
+        'text-color': '#1A237E',
+        'text-halo-color': '#FFFFFF',
+        'text-halo-width': 1.5
+      }
+    });
+    LAYERS['park_design_points'] = {
+      label: 'Парк: точки и подписи', color: '#FF6F00',
+      group: GROUP, visible: true, count: P.points.features.length,
+      mlIds: ['park_design_points-circle','park_design_points-label']
+    };
+  }
 }
 
 // ================== PANEL ==================
@@ -470,12 +709,56 @@ function attachPopups(D) {
     'avariynyi-circle':     p => popupHtml('Аварийный', '#8E0E1A', p.addr, [
                               ['Признан', p.year_recognized], ['Статус', p.status]
                             ]),
-    'new_housing-circle':   p => popupHtml('Новое жильё', '#1565C0', p.name, [['Описание', p.info]]),
-    'new_soc-circle':       p => popupHtml('Новый соцобъект', '#EF6C00', p.name, [['Тип', p.type], ['Описание', p.info]]),
     'free_land-fill':       p => popupHtml(p.category || 'Свободная территория', '#27AE60', p.name, [
                               ['Площадь, га', p.area_ha], ['Источник', p.source]
                             ]),
-    'demolish-fill':        p => popupHtml('Под снос', '#C62828', p.name, [['Описание', p.info]])
+    'demolish-fill':        p => popupHtml('Под снос', '#C62828', p.name, [['Описание', p.info]]),
+
+    // ===== доп. слои =====
+    'msp_centres-circle':       p => popupHtml('МСП', '#D98B1F', p.name, [['Адрес', p.addr], ['Описание', p.note || p.category]]),
+    'innovation_centres-circle':p => popupHtml('Инновации', '#3A78AC', p.name, [['Адрес', p.addr], ['Описание', p.note || p.category]]),
+    'digital_weak_circles-circle': p => popupHtml('Слабая связность', '#DC143C', p.name, [['Радиус, м', p.radius_m], ['Описание', p.note]]),
+    'digital_weak_corridor-line':  p => popupHtml('Цифровой коридор', '#DC143C', p.name, []),
+
+    'cult_theater-circle':  p => popupHtml('Театр / ДК',     '#8E24AA', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_museum-circle':   p => popupHtml('Музей',          '#1976D2', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_library-circle':  p => popupHtml('Библиотека',     '#A1887F', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_dshi-circle':     p => popupHtml('ДШИ',            '#FF7043', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_monument-circle': p => popupHtml('Памятник / ОКН', '#6D4C41', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_park-circle':     p => popupHtml('Парк культуры',  '#43A047', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_vuz-circle':      p => popupHtml('Вуз',            '#0277BD', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_kluster-circle':  p => popupHtml('Креат. кластер', '#EC407A', p.name, [['Адрес', p.addr], ['Примечание', p.note]]),
+    'cult_streets-line':    p => popupHtml('Тур. улица',     '#FFC107', p.street, []),
+
+    'bad_streets-line':     p => popupHtml('Плохая улица', '#C8322A', p.label || p.osm_name, []),
+    'bike_paths-line':      p => popupHtml('Велодорожка',  '#2E7D32', p.name, [['Тип', p.type]]),
+    'proj_bike_aleks-line': p => popupHtml('Проект велосети', '#FB8C00', p.name, []),
+
+    'proizv_active-circle': p => popupHtml('Производство', '#6D4C41', p.names || p.addr, [['Адрес', p.addr]]),
+    'proizv_eco-circle':    p => popupHtml('Эко-значимое', '#E64A19', p.names || p.addr, [['Адрес', p.addr]]),
+
+    'engineer_nodes-circle': p => popupHtml('Инжен. узел', '#7FA3A8', `${p.n}. ${p.title}`, [['Тип', p.type], ['Описание', p.desc]]),
+    'infra_drains-circle':   () => popupHtml('Дождеприёмник', '#1565C0', 'Ливневой колодец', []),
+    'infra_trash-circle':    () => popupHtml('Контейнер', '#212121', 'Мусорный контейнер / площадка ТКО', []),
+    'infra_solar-circle':    () => popupHtml('Солнечная панель', '#FDD835', 'Фотоэлектрическая панель на крыше', []),
+    'infra_toilets-circle':  () => popupHtml('Биотуалет', '#D81B60', 'Модульный биотуалет', []),
+    'infra_tower-circle':    p => popupHtml('Телеком-вышка', '#FF6F00', p.name, []),
+    'infra_crosswalks-line': () => popupHtml('Пешеходный переход', '#FFFFFF', 'Зебра (проект)', []),
+    'infra_bike_loop-line':  p => popupHtml('Велодорожка', '#E53935', p.name || 'Кольцевая (проект)', []),
+    'infra_sidewalk-line':   p => popupHtml('Тротуар (проект)', '#1976D2', p.name || '', []),
+    'park_design_fills-fill':    p => popupHtml('Парк: ' + (p.kind || ''), '#FB8C00', p.name || '', []),
+    'park_design_points-circle': p => popupHtml('Парк', '#FF6F00', p.name || '', [['Тип', p.kind]]),
+    'park_design_lines-main':    p => popupHtml('Аллея', '#888', p.name || '', []),
+    'park_design_lines-bike':    p => popupHtml('Велодорожка по парку', '#43A047', p.name || '', []),
+    'ecology_sources-circle':p => popupHtml('Источник загрязнения', '#5D4037', p.name, [['Адрес', p.addr], ['Тип', p.kind]]),
+    'ecology_zones-circle':  p => popupHtml('Зона загрязнения', '#DC143C', p.area, [['Уровень', p.level]]),
+
+    'green_parks_dev-circle':    p => popupHtml('Парк (благоустр.)',     '#2E7D32', p.name, []),
+    'green_parks_nodev-circle':  p => popupHtml('Парк (без благоустр.)', '#A5D6A7', p.name, []),
+    'green_skvery_dev-circle':   p => popupHtml('Сквер (благоустр.)',    '#43A047', p.name, []),
+    'green_skvery_nodev-circle': p => popupHtml('Сквер (без благоустр.)','#C8E6C9', p.name, []),
+    'green_forests-circle':      p => popupHtml('Лес / роща',            '#1B5E20', p.name, []),
+    'green_water-circle':        p => popupHtml('Водный объект',         '#0288D1', p.name, [])
   };
 
   for (const [layerId, render] of Object.entries(renderers)) {
@@ -525,11 +808,194 @@ const BUILDINGS_3D = [
   { id: 'инновационный', kind: 'Инновационный центр', model: 'models/инновационная.glb',
     lng: 39.78048, lat: 47.23841, rotY: 0, targetH: 14,
     props: { 'Этажность': '3 этажа', 'Тип': 'Бесплатный инновационный центр (фьюжн)' } },
-  { id: 'вышка', kind: 'Вышка связи', model: 'models/вышка связи.glb',
-    lng: 39.77908, lat: 47.23786, rotY: 0, targetH: 52.5, scaleY: 2,
-    props: { 'Тип': 'Базовая станция / вышка связи' } }
+  { id: 'мфкдц', kind: 'МФКДЦ', model: 'models/мфкдц.glb',
+    lng: 39.77563, lat: 47.23638, rotY: Math.PI / 12, targetH: 12,
+    props: { 'Тип': 'Многофункциональный культурно-досуговый центр',
+             'Содержит': 'библиотека + кружки/ДШИ + клубный зал + коворкинг' } },
+  { id: 'теннис', kind: 'Теннисный корт', model: 'models/теннис.glb',
+    lng: 39.77871, lat: 47.23610, rotY: 0, targetH: 8,
+    props: { 'Тип': 'Спортивная площадка / теннисный корт' } },
+  { id: 'школа', kind: 'Школа', model: 'models/школа.glb',
+    lng: 39.77701, lat: 47.23869, rotY: 0, targetH: 28,
+    props: { 'Тип': 'Школа', 'Этажность': '3 этажа' } },
+  { id: 'остановка-1', kind: 'Остановка', model: 'models/автобусная остановка.glb',
+    lng: 39.78011, lat: 47.23665, rotY: Math.PI / 6, targetH: 3.5,
+    props: { 'Тип': 'Автобусная остановка (северная сторона)' } },
+  { id: 'остановка-2', kind: 'Остановка', model: 'models/автобусная остановка.glb',
+    lng: 39.77917, lat: 47.23597, rotY: Math.PI + Math.PI / 6, targetH: 3.5,
+    props: { 'Тип': 'Автобусная остановка (южная сторона)' } }
 ];
 window.PROL_3D_BUILDINGS = BUILDINGS_3D;
+
+// ===== Инжен. инфра проекта (точки на квартал Берберовка) =====
+const INFRA_DRAINS = [
+  [39.7746,47.2389],[39.77503,47.2389],[39.77546,47.2389],[39.77589,47.2389],[39.77632,47.2389],
+  [39.77675,47.2389],[39.77718,47.2389],[39.77761,47.2389],[39.77804,47.2389],[39.77847,47.2389],
+  [39.7789,47.2389],[39.7789,47.2386],[39.7789,47.2383],[39.7789,47.238],[39.7789,47.2377],
+  [39.7789,47.2374],[39.7789,47.2371],[39.7789,47.2368],[39.7789,47.2365],[39.7789,47.2362],
+  [39.7789,47.2359],[39.77847,47.2359],[39.77804,47.2359],[39.77761,47.2359],[39.77718,47.2359],
+  [39.77675,47.2359],[39.77632,47.2359],[39.77589,47.2359],[39.77546,47.2359],[39.77503,47.2359],
+  [39.7746,47.2359],[39.7746,47.2362],[39.7746,47.2365],[39.7746,47.2368],[39.7746,47.2371],
+  [39.7746,47.2374],[39.7746,47.2377],[39.7746,47.238],[39.7746,47.2383],[39.7746,47.2386]
+];
+const INFRA_TRASH = [
+  [39.7749,47.2362],[39.7749,47.23668],[39.7749,47.23716],[39.7749,47.23764],[39.7749,47.23812],[39.7749,47.2386],
+  [39.775517,47.2362],[39.775517,47.23668],[39.775517,47.23716],[39.775517,47.23764],[39.775517,47.23812],[39.775517,47.2386],
+  [39.776133,47.2362],[39.776133,47.23668],[39.776133,47.23716],[39.776133,47.23764],[39.776133,47.23812],[39.776133,47.2386],
+  [39.77675,47.2362],[39.77675,47.23668],[39.77675,47.23716],[39.77675,47.23764],[39.77675,47.23812],[39.77675,47.2386],
+  [39.777367,47.2362],[39.777367,47.23668],[39.777367,47.23716],[39.777367,47.23764],[39.777367,47.23812],[39.777367,47.2386],
+  [39.777983,47.2362],[39.777983,47.23668],[39.777983,47.23716],[39.777983,47.23764],[39.777983,47.23812],[39.777983,47.2386],
+  [39.7786,47.2362],[39.7786,47.23668],[39.7786,47.23716],[39.7786,47.23764],[39.7786,47.23812],[39.7786,47.2386]
+];
+const INFRA_SOLAR = [
+  [39.775741,47.237427],[39.775741,47.237373],[39.77582,47.237427],[39.77582,47.237373],
+  [39.7759,47.237427],[39.7759,47.237373],[39.775979,47.237427],[39.775979,47.237373],
+  [39.776211,47.237267],[39.776211,47.237213],[39.77629,47.237267],[39.77629,47.237213],
+  [39.77637,47.237267],[39.77637,47.237213],[39.776449,47.237267],[39.776449,47.237213]
+];
+const INFRA_TOILETS = [
+  [39.77701,47.23862],[39.776,47.23735],[39.77563,47.2365],[39.7786,47.23615],[39.7775,47.238]
+];
+function _arrToFc(arr) {
+  return { type: 'FeatureCollection', features: arr.map(([x, y]) => ({
+    type: 'Feature', geometry: { type: 'Point', coordinates: [x, y] }, properties: {}
+  })) };
+}
+window.INFRA_DRAINS_FC  = _arrToFc(INFRA_DRAINS);
+window.INFRA_TRASH_FC   = _arrToFc(INFRA_TRASH);
+window.INFRA_SOLAR_FC   = _arrToFc(INFRA_SOLAR);
+window.INFRA_TOILETS_FC = _arrToFc(INFRA_TOILETS);
+
+// ===== Пешеходные переходы (зебра) =====
+function _makeCrosswalk(cLng, cLat, orient, stripes = 6, lengthM = 6, gapM = 1.0, rotateDeg = 0) {
+  // orient: 'we' = базово полосы N-S (дорога W↔E)
+  //         'ns' = базово полосы W-E (дорога N↔S)
+  // rotateDeg: дополнительный поворот всей зебры против часовой стрелки
+  const M_LAT = 1 / 111320;
+  const M_LON = 1 / (111320 * Math.cos(cLat * Math.PI / 180));
+  let sMx, sMy, oMx, oMy;
+  if (orient === 'we') { sMx = 0; sMy = 1; oMx = 1; oMy = 0; }
+  else                 { sMx = 1; sMy = 0; oMx = 0; oMy = 1; }
+  const r = rotateDeg * Math.PI / 180, cR = Math.cos(r), sR = Math.sin(r);
+  const sx = sMx * cR - sMy * sR, sy = sMx * sR + sMy * cR;
+  const ox = oMx * cR - oMy * sR, oy = oMx * sR + oMy * cR;
+  const halfL = lengthM / 2;
+  const lines = [];
+  for (let i = 0; i < stripes; i++) {
+    const t = (i - (stripes - 1) / 2) * gapM;
+    const cxm = t * ox, cym = t * oy;
+    const axm = cxm + halfL * sx, aym = cym + halfL * sy;
+    const bxm = cxm - halfL * sx, bym = cym - halfL * sy;
+    lines.push([
+      [cLng + axm * M_LON, cLat + aym * M_LAT],
+      [cLng + bxm * M_LON, cLat + bym * M_LAT]
+    ]);
+  }
+  return { type: 'Feature', geometry: { type: 'MultiLineString', coordinates: lines }, properties: {} };
+}
+// Точка-маркер «Вышка связи» поверх инновационного центра
+window.INFRA_TOWER_FC = {
+  type: 'FeatureCollection',
+  features: [{
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [39.78048, 47.23841] },
+    properties: { name: 'Базовая станция / вышка связи (на крыше Инновационного центра)' }
+  }]
+};
+
+window.INFRA_CROSSWALKS_FC = {
+  type: 'FeatureCollection',
+  features: [
+    _makeCrosswalk(39.77987, 47.23639, 'ns', 6, 6, 1.0, 30),  // переход 1
+    _makeCrosswalk(39.78134, 47.23678, 'ns', 6, 6, 1.0, -50),  // переход 2
+  ]
+};
+
+// ===== Тротуар-благоустройство по сев. стороне ул. Черевичкина =====
+window.INFRA_SIDEWALK_FC = {
+  type: 'FeatureCollection',
+  features: [{
+    type: 'Feature',
+    geometry: {
+      type: 'LineString',
+      coordinates: [
+        [39.776960, 47.235120],
+        [39.778379, 47.235671],
+        [39.778574, 47.235751],
+        [39.779460, 47.236174],
+        [39.779592, 47.236248],
+        [39.779866, 47.236403],
+        [39.779990, 47.236440]
+      ]
+    },
+    properties: { name: 'Тротуар вдоль ул. Черевичкина (проект благоустройства)' }
+  }]
+};
+
+// ===== Велодорожка-кольцо вокруг квартала + парк =====
+window.INFRA_BIKE_LOOP_FC = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          // Маршрут по улицам квартала с двумя касаниями парк-велодорожки.
+          // Геометрия осей улиц — из OSM.
+          [39.778445, 47.236805], // касание парк-велодорожки (юг парка)
+          [39.778574, 47.235751], // восточный конец Черевичкина у квартала
+          [39.778379, 47.235671],
+          [39.776996, 47.235129], // ул. Черевичкина — на запад
+          [39.774326, 47.234630], // ЮЗ-угол: Черевичкина × 40-я линия
+          [39.773655, 47.236327], // СЗ-угол: 40-я × Рябышева
+          [39.774550, 47.236503], // Рябышева × Горсоветская
+          [39.774681, 47.237105], // Горсоветская — на сев-восток
+          [39.774923, 47.238110],
+          [39.775230, 47.239370],
+          [39.775957, 47.239497], // Горсоветская × Рыльского
+          [39.777245, 47.239268], // ул. Рыльского — на восток
+          [39.779758, 47.241338],
+          [39.780809, 47.241326], // восточный конец Рыльского
+          [39.782095, 47.241191]  // касание парк-велодорожки (СЗ парка)
+        ]
+      },
+      properties: { name: 'Велодорожка по улицам квартала (проект)' }
+    },
+    {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          // внешний контур (выпуклая оболочка + буфер 12 м) вокруг обоих парков
+          [39.778401,47.236644],[39.778408,47.236588],[39.778426,47.236534],
+          [39.778453,47.236481],[39.77849,47.236431],[39.778536,47.236384],
+          [39.77859,47.236341],[39.778652,47.236303],[39.77872,47.236271],
+          [39.778794,47.236245],[39.778871,47.236225],[39.778952,47.236212],
+          [39.779034,47.236206],[39.779116,47.236207],[39.779196,47.236215],
+          [39.779274,47.23623],[39.782225,47.237032],[39.783384,47.237394],
+          [39.784002,47.237647],[39.784159,47.237843],[39.784795,47.241582],
+          [39.784539,47.241764],[39.784021,47.242],[39.782308,47.241384],
+          [39.782095,47.241191],[39.778476,47.236854],[39.778442,47.236805],
+          [39.778419,47.236753],[39.778405,47.236699],[39.778401,47.236644]
+        ]
+      },
+      properties: { name: 'Велодорожка по контуру парков (проект)' }
+    },
+    {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          // Продолжение ул. Рыльского — пересекает парк-велодорожку под ~прямым углом
+          [39.77975, 47.23839],
+          [39.77724, 47.23926]
+        ]
+      },
+      properties: { name: 'Велодорожка по ул. Рыльского — пересечение (проект)' }
+    }
+  ]
+};
 
 const ORIGIN_LNGLAT = PROL_CENTER;
 const ORIGIN_MERC = maplibregl.MercatorCoordinate.fromLngLat(ORIGIN_LNGLAT, 0);
