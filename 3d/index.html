@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Ростов-на-Дону · Мастер-план Пролетарского · 3D</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; height: 100vh; }
+  #panel {
+    width: 320px; flex-shrink: 0; background: #fff; border-right: 1px solid #e6e3df;
+    overflow-y: auto; padding: 18px 16px;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.04);
+  }
+  #panel h1 { margin: 0 0 4px; font-size: 22px; color: #2e2a3a; letter-spacing: -0.3px; }
+  #panel .sub { font-size: 12px; color: #8a8499; margin-bottom: 18px; letter-spacing: 0.3px; text-transform: uppercase; }
+  #map { flex: 1; position: relative; }
+  .group-title {
+    font-size: 10px; letter-spacing: 1.2px; color: #a39db1; text-transform: uppercase;
+    margin: 14px 0 8px; font-weight: 600;
+  }
+  .layer-row {
+    display: flex; align-items: center; gap: 9px; padding: 6px 8px;
+    cursor: pointer; border-radius: 7px; transition: background 0.12s;
+    font-size: 13.5px; color: #2e2a3a;
+  }
+  .layer-row:hover { background: #f6f4f8; }
+  .layer-row input[type="checkbox"] { margin: 0; }
+  .layer-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .layer-count { margin-left: auto; font-size: 11px; color: #b5afc1; }
+  .controls {
+    position: absolute; right: 12px; top: 12px; z-index: 5;
+    background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+    overflow: hidden;
+  }
+  .controls button {
+    border: none; background: #fff; padding: 9px 12px; cursor: pointer; font-size: 13px;
+    border-bottom: 1px solid #eee; display: block; width: 100%; text-align: left;
+  }
+  .controls button:hover { background: #f6f4f8; }
+  .controls button:last-child { border-bottom: none; }
+  .legend-tip {
+    position: absolute; right: 12px; bottom: 30px; z-index: 5;
+    background: rgba(255,255,255,0.95); padding: 8px 12px; border-radius: 8px;
+    font-size: 12px; color: #555; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    max-width: 240px;
+  }
+  .legend-tip kbd {
+    background: #eee; padding: 1px 5px; border-radius: 3px;
+    font-family: monospace; font-size: 11px;
+  }
+  .maplibregl-popup-content {
+    border-radius: 10px; padding: 12px 14px; font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  }
+  .popup-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; color: #2e2a3a; }
+  .popup-meta { color: #6b6478; font-size: 12px; line-height: 1.5; }
+  .popup-chip {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.3px;
+    margin-bottom: 6px; text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <h1>Ростов-на-Дону</h1>
+    <div class="sub">Мастер-план Пролетарского · 3D</div>
+    <div id="layers"></div>
+  </div>
+  <div id="map">
+    <div class="controls">
+      <button id="btn-reset">Сбросить вид</button>
+      <button id="btn-top">Сверху (2D)</button>
+      <button id="btn-3d">3D-вид</button>
+    </div>
+    <div class="legend-tip">
+      Зажмите <kbd>Ctrl</kbd> + тяните мышь — наклон/поворот камеры. Колесо — зум.
+    </div>
+    <div id="coord-readout" style="position:absolute;left:12px;bottom:12px;z-index:5;background:rgba(255,255,255,0.95);padding:6px 10px;border-radius:6px;font-family:monospace;font-size:12px;color:#333;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+      Клик по карте → координаты сюда
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/three@0.140.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.140.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://unpkg.com/three@0.140.0/examples/js/loaders/DRACOLoader.js"></script>
+
+<script>
+// ================== INIT ==================
+const DISTRICT_COLORS = {
+  "Ворошиловский район":  "#FFCDD2",
+  "Октябрьский район":    "#C8E6C9",
+  "Советский район":      "#B3E5FC",
+  "Первомайский район":   "#FFE0B2",
+  "Ленинский район":      "#E1BEE7",
+  "Кировский район":      "#FFF9C4",
+  "Железнодорожный район":"#D7CCC8",
+  "Пролетарский район":   "#F8BBD0"
+};
+
+const PROL_CENTER = [39.7789, 47.2360];   // Берберовка, квартал с проектом
+const INITIAL_VIEW = { center: PROL_CENTER, zoom: 16.8, pitch: 55, bearing: -12 };
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: {
+    version: 8,
+    sources: {
+      'carto': {
+        type: 'raster',
+        tiles: [
+          'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+          'https://c.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap, © CARTO'
+      }
+    },
+    layers: [{ id: 'carto-base', type: 'raster', source: 'carto' }]
+  },
+  center: INITIAL_VIEW.center,
+  zoom: INITIAL_VIEW.zoom,
+  pitch: INITIAL_VIEW.pitch,
+  bearing: INITIAL_VIEW.bearing,
+  antialias: true,
+  maxPitch: 75
+});
+
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
+
+document.getElementById('btn-reset').onclick = () => map.flyTo({ ...INITIAL_VIEW, duration: 800 });
+document.getElementById('btn-top').onclick = () => map.flyTo({ pitch: 0, bearing: 0, duration: 600 });
+document.getElementById('btn-3d').onclick = () => map.flyTo({ pitch: 60, bearing: -15, duration: 600 });
+
+// Клик по карте → показать координаты (для удобства настройки расположения)
+map.on('click', (e) => {
+  const lng = e.lngLat.lng.toFixed(5);
+  const lat = e.lngLat.lat.toFixed(5);
+  document.getElementById('coord-readout').textContent = `lng: ${lng}, lat: ${lat}`;
+});
+
+// ================== LOAD DATA ==================
+console.log('[boot] script started');
+const mapReady = new Promise((res) => {
+  if (map.loaded()) res();
+  else map.on('load', res);
+});
+Promise.all([
+  fetch('data/prol_data.json').then(r => {
+    if (!r.ok) throw new Error('fetch prol_data: ' + r.status);
+    return r.json();
+  }),
+  mapReady
+]).then(([D]) => {
+  console.log('[boot] map+data ready, features:', {
+    schools: D.schools && D.schools.features.length,
+    avariynyi: D.avariynyi && D.avariynyi.features.length,
+    free_land: D.free_land && D.free_land.features.length
+  });
+  initLayers(D);
+}).catch(e => console.error('[boot] fail:', e));
+
+// ================== LAYERS ==================
+const LAYERS = {};   // {id: {label, color, group, build, visible, count}}
+
+function initLayers(D) {
+  console.log('[init] data loaded, building layers');
+  // районы — границы всех + заливка Пролетарского
+  map.addSource('districts', { type: 'geojson', data: D.districts });
+  map.addLayer({
+    id: 'districts-fill', type: 'fill', source: 'districts',
+    paint: {
+      'fill-color': [
+        'match', ['get', 'name'],
+        'Ворошиловский район',  '#FFCDD2',
+        'Октябрьский район',    '#C8E6C9',
+        'Советский район',      '#B3E5FC',
+        'Первомайский район',   '#FFE0B2',
+        'Ленинский район',      '#E1BEE7',
+        'Кировский район',      '#FFF9C4',
+        'Железнодорожный район','#D7CCC8',
+        'Пролетарский район',   '#F8BBD0',
+        '#cccccc'
+      ],
+      'fill-opacity': [
+        'case', ['==', ['get', 'name'], 'Пролетарский район'], 0.35, 0.10
+      ]
+    }
+  });
+  map.addLayer({
+    id: 'districts-line', type: 'line', source: 'districts',
+    paint: {
+      'line-color': '#5d4d8b',
+      'line-width': [
+        'case', ['==', ['get', 'name'], 'Пролетарский район'], 2.5, 1
+      ],
+      'line-opacity': 0.7
+    }
+  });
+  console.log('[init] districts layer added');
+
+  // свободные территории Пролетарского
+  registerGeoJsonFill('free_land', D.free_land,
+    { label: 'Свободные территории', color: '#27AE60', group: 'Фокус мастер-плана', visible: false, dash: true });
+
+  // снос
+  registerGeoJsonFill('demolish', D.demolish,
+    { label: 'Под снос', color: '#C62828', group: 'Мастер-план', visible: false });
+  // новое жильё
+  registerGeoJsonPoint('new_housing', D.new_housing,
+    { label: 'Проект: новое жильё', color: '#1565C0', group: 'Мастер-план', visible: false, radius: 6 });
+  // новые соцобъекты
+  registerGeoJsonPoint('new_soc', D.new_soc,
+    { label: 'Проект: новые соцобъекты', color: '#EF6C00', group: 'Мастер-план', visible: false, radius: 7 });
+
+  // соц
+  registerGeoJsonPoint('schools', D.schools,
+    { label: 'Школы', color: '#E91E63', group: 'Социальная сфера', visible: false, radius: 5 });
+  registerGeoJsonPoint('health', D.health,
+    { label: 'Больницы и поликлиники', color: '#D32F2F', group: 'Социальная сфера', visible: false, radius: 5 });
+  registerGeoJsonPoint('kindergartens', D.kindergartens,
+    { label: 'Детские сады', color: '#F57C00', group: 'Социальная сфера', visible: false, radius: 4 });
+  registerGeoJsonPoint('sport', D.sport,
+    { label: 'Спортивные объекты', color: '#388E3C', group: 'Социальная сфера', visible: false, radius: 5 });
+
+  // ЖК
+  registerGeoJsonPoint('zhk', D.zhk,
+    { label: 'ЖК (Пролетарский)', color: '#5E35B1', group: 'Застройка', visible: false, radius: 6 });
+  registerGeoJsonPoint('avariynyi', D.avariynyi,
+    { label: 'Аварийный фонд', color: '#8E0E1A', group: 'Застройка', visible: true, radius: 4 });
+
+  // Заполняем зону "СТ Красный Аксай-4" плитками парка
+  try { generateParkTiles(D); }
+  catch (e) { console.error('park tiles error:', e); }
+
+  // Сначала строим UI и попапы, потом — тяжёлый 3D слой.
+  // Так UI отрисуется даже если что-то упадёт в 3D.
+  try { buildPanel(); console.log('[init] panel built'); }
+  catch (e) { console.error('panel error:', e); }
+  try { attachPopups(D); console.log('[init] popups attached'); }
+  catch (e) { console.error('popups error:', e); }
+  try { add3DBuildingsLayer(); console.log('[init] 3D layer added'); }
+  catch (e) { console.error('3d layer error:', e); }
+}
+
+function generateParkTiles(D) {
+  if (!D.free_land) return;
+  const target = D.free_land.features.find(f => f.properties.osm_id === 159238548);
+  if (!target) { console.warn('[parks] СТ Красный Аксай-4 polygon not found'); return; }
+  const geom = target.geometry;
+  const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+
+  // Зелёная заливка под полигоном — имитирует газон
+  map.addSource('park-zone', { type: 'geojson', data: { type: 'FeatureCollection', features: [target] } });
+  map.addLayer({
+    id: 'park-zone-fill', type: 'fill', source: 'park-zone',
+    paint: { 'fill-color': '#5FAE80', 'fill-opacity': 0.85 }
+  });
+  map.addLayer({
+    id: 'park-zone-line', type: 'line', source: 'park-zone',
+    paint: { 'line-color': '#3F8A60', 'line-width': 1.2, 'line-dasharray': [3, 2] }
+  });
+
+  let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  polys.forEach(poly => poly[0].forEach(([lng, lat]) => {
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }));
+  function inRing(ring, x, y) {
+    let inside = false;
+    const n = ring.length;
+    let j = n - 1;
+    for (let i = 0; i < n; i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi)) inside = !inside;
+      j = i;
+    }
+    return inside;
+  }
+  function inPoly(x, y) {
+    for (const poly of polys) {
+      if (!inRing(poly[0], x, y)) continue;
+      let hole = false;
+      for (let h = 1; h < poly.length; h++) if (inRing(poly[h], x, y)) { hole = true; break; }
+      if (!hole) return true;
+    }
+    return false;
+  }
+  // Деревья: 150 случайных точек внутри полигона (всё что не попало — выбрасывается)
+  const TARGET = 150;
+  let count = 0, attempts = 0;
+  while (count < TARGET && attempts < TARGET * 6) {
+    attempts++;
+    const lng = minLng + Math.random() * (maxLng - minLng);
+    const lat = minLat + Math.random() * (maxLat - minLat);
+    if (!inPoly(lng, lat)) continue;
+    const sizeJitter = 0.7 + Math.random() * 0.7;  // 0.7–1.4×
+    BUILDINGS_3D.push({
+      id: `tree-park1-${count}`,
+      kind: 'Дерево',
+      model: 'models/дерево.glb',
+      lng, lat,
+      rotY: Math.random() * Math.PI * 2,
+      targetH: 5 * sizeJitter,
+      isScene: true,
+      isParkTile: true,
+      props: { 'Тип': 'Дерево' }
+    });
+    count++;
+  }
+  console.log(`[parks] generated ${count} trees + green fill in СТ Красный Аксай-4`);
+
+  // Второй парк — круг 100 м вокруг (39.77914, 47.23669)
+  addCircularPark(39.77914, 47.23669, 45, 'park-zone-2', 'tree-park2', 28);
+}
+
+function addCircularPark(centerLng, centerLat, radiusM, sourceId, idPrefix, tileCount) {
+  // Строим окружность как полигон GeoJSON (32 точки)
+  const N = 48;
+  const latPerM = 1 / 111320;
+  const lngPerM = 1 / (111320 * Math.cos(centerLat * Math.PI / 180));
+  const ring = [];
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    ring.push([
+      centerLng + Math.cos(a) * radiusM * lngPerM,
+      centerLat + Math.sin(a) * radiusM * latPerM
+    ]);
+  }
+  const feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } };
+  map.addSource(sourceId, { type: 'geojson', data: { type: 'FeatureCollection', features: [feature] } });
+  map.addLayer({
+    id: sourceId + '-fill', type: 'fill', source: sourceId,
+    paint: { 'fill-color': '#5FAE80', 'fill-opacity': 0.85 }
+  });
+  map.addLayer({
+    id: sourceId + '-line', type: 'line', source: sourceId,
+    paint: { 'line-color': '#3F8A60', 'line-width': 1.2, 'line-dasharray': [3, 2] }
+  });
+  // Случайные точки внутри круга (равномерно по площади через sqrt)
+  let count = 0;
+  while (count < tileCount) {
+    const r = Math.sqrt(Math.random()) * radiusM * 0.92;
+    const a = Math.random() * Math.PI * 2;
+    const lng = centerLng + Math.cos(a) * r * lngPerM;
+    const lat = centerLat + Math.sin(a) * r * latPerM;
+    const sizeJitter = 0.7 + Math.random() * 0.7;
+    BUILDINGS_3D.push({
+      id: `${idPrefix}-tree-${count}`,
+      kind: 'Дерево',
+      model: 'models/дерево.glb',
+      lng, lat,
+      rotY: Math.random() * Math.PI * 2,
+      targetH: 5 * sizeJitter,
+      isScene: true,
+      isParkTile: true,
+      props: { 'Тип': 'Дерево' }
+    });
+    count++;
+  }
+  console.log(`[parks] circular park: center=[${centerLng}, ${centerLat}], r=${radiusM}m, ${count} trees`);
+}
+
+function registerGeoJsonFill(id, data, opts) {
+  if (!data || !data.features || !data.features.length) return;
+  map.addSource(id, { type: 'geojson', data });
+  map.addLayer({
+    id: id + '-fill', type: 'fill', source: id,
+    paint: {
+      'fill-color': opts.color,
+      'fill-opacity': 0.32
+    },
+    layout: { visibility: opts.visible ? 'visible' : 'none' }
+  });
+  map.addLayer({
+    id: id + '-line', type: 'line', source: id,
+    paint: {
+      'line-color': opts.color, 'line-width': 1.5,
+      'line-dasharray': opts.dash ? [3, 2] : [1, 0]
+    },
+    layout: { visibility: opts.visible ? 'visible' : 'none' }
+  });
+  LAYERS[id] = {
+    ...opts, count: data.features.length, mlIds: [id + '-fill', id + '-line']
+  };
+}
+
+function registerGeoJsonPoint(id, data, opts) {
+  if (!data || !data.features || !data.features.length) return;
+  map.addSource(id, { type: 'geojson', data });
+  map.addLayer({
+    id: id + '-circle', type: 'circle', source: id,
+    paint: {
+      'circle-radius': opts.radius || 5,
+      'circle-color': opts.color,
+      'circle-stroke-color': '#fff',
+      'circle-stroke-width': 1.2,
+      'circle-opacity': 0.92
+    },
+    layout: { visibility: opts.visible ? 'visible' : 'none' }
+  });
+  LAYERS[id] = { ...opts, count: data.features.length, mlIds: [id + '-circle'] };
+}
+
+// ================== PANEL ==================
+function buildPanel() {
+  const root = document.getElementById('layers');
+  const groups = {};
+  for (const [id, L] of Object.entries(LAYERS)) {
+    (groups[L.group] = groups[L.group] || []).push([id, L]);
+  }
+  // Add fixed group for new 3D buildings
+  if (window.PROL_3D_BUILDINGS) groups['Проект: 3D-объекты'] = [['__3d__', { label: 'Новые объекты (3D)', color: '#FF6F00', count: window.PROL_3D_BUILDINGS.length, visible: true }]];
+
+  for (const [gname, items] of Object.entries(groups)) {
+    const t = document.createElement('div');
+    t.className = 'group-title';
+    t.textContent = gname;
+    root.appendChild(t);
+    for (const [id, L] of items) {
+      const row = document.createElement('label');
+      row.className = 'layer-row';
+      row.innerHTML = `
+        <input type="checkbox" ${L.visible ? 'checked' : ''}>
+        <span class="layer-dot" style="background:${L.color}"></span>
+        <span>${L.label}</span>
+        <span class="layer-count">${L.count}</span>`;
+      const cb = row.querySelector('input');
+      cb.onchange = () => toggleLayer(id, cb.checked);
+      root.appendChild(row);
+    }
+  }
+}
+
+function toggleLayer(id, visible) {
+  if (id === '__3d__') {
+    if (window.toggle3DBuildings) window.toggle3DBuildings(visible);
+    return;
+  }
+  const L = LAYERS[id];
+  if (!L) return;
+  L.visible = visible;
+  for (const mlId of L.mlIds) {
+    map.setLayoutProperty(mlId, 'visibility', visible ? 'visible' : 'none');
+  }
+}
+
+// ================== POPUPS ==================
+function attachPopups(D) {
+  const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '280px' });
+
+  const renderers = {
+    'schools-circle':       p => popupHtml('Школа', '#E91E63', p.name, [['Адрес', p.addr]]),
+    'health-circle':        p => popupHtml('Здравоохранение', '#D32F2F', p.name, [['Адрес', p.addr]]),
+    'kindergartens-circle': p => popupHtml('Детский сад', '#F57C00', p.name, [['Адрес', p.addr]]),
+    'sport-circle':         p => popupHtml('Спорт', '#388E3C', p.name, [['Адрес', p.addr]]),
+    'zhk-circle':           p => popupHtml('ЖК', '#5E35B1', p.name, [
+                              ['Адрес', p.addr], ['Застройщик', p.developer],
+                              ['Статус', p.status], ['Срок', p.deadline], ['Год', p.year], ['Описание', p.info]
+                            ]),
+    'avariynyi-circle':     p => popupHtml('Аварийный', '#8E0E1A', p.addr, [
+                              ['Признан', p.year_recognized], ['Статус', p.status]
+                            ]),
+    'new_housing-circle':   p => popupHtml('Новое жильё', '#1565C0', p.name, [['Описание', p.info]]),
+    'new_soc-circle':       p => popupHtml('Новый соцобъект', '#EF6C00', p.name, [['Тип', p.type], ['Описание', p.info]]),
+    'free_land-fill':       p => popupHtml(p.category || 'Свободная территория', '#27AE60', p.name, [
+                              ['Площадь, га', p.area_ha], ['Источник', p.source]
+                            ]),
+    'demolish-fill':        p => popupHtml('Под снос', '#C62828', p.name, [['Описание', p.info]])
+  };
+
+  for (const [layerId, render] of Object.entries(renderers)) {
+    if (!map.getLayer(layerId)) continue;
+    map.on('click', layerId, e => {
+      const f = e.features[0];
+      const lngLat = f.geometry.type === 'Point'
+        ? f.geometry.coordinates
+        : e.lngLat;
+      popup.setLngLat(lngLat).setHTML(render(f.properties || {})).addTo(map);
+    });
+    map.on('mouseenter', layerId, () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', layerId, () => map.getCanvas().style.cursor = '');
+  }
+}
+
+function popupHtml(chipText, chipColor, title, fields) {
+  const safeT = title || '—';
+  const lines = (fields || []).filter(([k, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `<div><b>${k}:</b> ${v}</div>`).join('');
+  return `
+    <span class="popup-chip" style="background:${chipColor}22;color:${chipColor}">${chipText}</span>
+    <div class="popup-title">${safeT}</div>
+    <div class="popup-meta">${lines}</div>`;
+}
+
+// ================== 3D BUILDINGS ==================
+// Координаты прикинуты "на глаз" по скетчу пользователя (Берберовка).
+// Можно править координаты/высоту/поворот прямо здесь — изменения видны после reload.
+// Координаты по скетчу пользователя — Берберовка, квартал между ул. Рябышева и ул. Черевичкина
+const BUILDINGS_3D = [
+  { id: 'жилой-1', kind: 'Жилой дом', model: 'models/жилой.glb',
+    lng: 39.77586, lat: 47.23740, rotY: Math.PI / 2 - 0.32, targetH: 15, scaleX: 2.4, scaleZ: 1.1,
+    props: { 'Этажность': '4 этажа', 'Тип': 'Современный жилой дом' } },
+  { id: 'жилой-2', kind: 'Жилой дом', model: 'models/жилой.glb',
+    lng: 39.77633, lat: 47.23724, rotY: Math.PI / 2 - 1.10, targetH: 15, scaleX: 2.4, scaleZ: 1.9,
+    props: { 'Этажность': '4 этажа', 'Тип': 'Современный жилой дом' } },
+  { id: 'производство', kind: 'Производство', model: 'models/производство.glb',
+    lng: 39.77673, lat: 47.23542, rotY: 0, targetH: 18,
+    props: { 'Этажность': '2 этажа', 'Тип': 'Производственное помещение' } },
+  { id: 'офис', kind: 'МСП-офис', model: 'models/офис.glb',
+    lng: 39.77772, lat: 47.23594, rotY: Math.PI, targetH: 16.5,
+    props: { 'Этажность': '3 этажа', 'Тип': 'Отдельное офисное здание' } },
+  { id: 'остановка', kind: 'Остановка', model: 'models/автобусная остановка.glb',
+    lng: 39.77712, lat: 47.23531, rotY: 0.349, targetH: 3.5,
+    props: { 'Тип': 'Остановочный павильон' } },
+  { id: 'инновационный', kind: 'Инновационный центр', model: 'models/инновационная.glb',
+    lng: 39.78048, lat: 47.23841, rotY: 0, targetH: 14,
+    props: { 'Этажность': '3 этажа', 'Тип': 'Бесплатный инновационный центр (фьюжн)' } },
+  { id: 'вышка', kind: 'Вышка связи', model: 'models/вышка связи.glb',
+    lng: 39.77908, lat: 47.23786, rotY: 0, targetH: 52.5, scaleY: 2,
+    props: { 'Тип': 'Базовая станция / вышка связи' } }
+];
+window.PROL_3D_BUILDINGS = BUILDINGS_3D;
+
+const ORIGIN_LNGLAT = PROL_CENTER;
+const ORIGIN_MERC = maplibregl.MercatorCoordinate.fromLngLat(ORIGIN_LNGLAT, 0);
+const METERS_PER_UNIT = 1.0 / ORIGIN_MERC.meterInMercatorCoordinateUnits();
+// каждая 1.0 в Three.js scene = 1 / METERS_PER_UNIT mercator units = 1 метр
+
+let CUSTOM_3D_LAYER = null;
+
+function add3DBuildingsLayer() {
+  CUSTOM_3D_LAYER = {
+    id: 'buildings-3d',
+    type: 'custom',
+    renderingMode: '3d',
+    onAdd: function(map, gl) {
+      this.map = map;
+      this.camera = new THREE.Camera();
+      this.scene = new THREE.Scene();
+
+      // Освещение
+      const ambient = new THREE.AmbientLight(0xffffff, 0.95);
+      this.scene.add(ambient);
+      const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+      sun.position.set(150, 250, 200);
+      this.scene.add(sun);
+      const sun2 = new THREE.DirectionalLight(0xffe6c4, 0.45);
+      sun2.position.set(-100, 80, -120);
+      this.scene.add(sun2);
+
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: map.getCanvas(), context: gl, antialias: true
+      });
+      this.renderer.autoClear = false;
+
+      // Контейнер для всех зданий — в нём размещаем по позициям
+      this.objects = [];   // [{group, b}]
+      this.objectsById = {};
+
+      const loader = new THREE.GLTFLoader();
+      const draco = new THREE.DRACOLoader();
+      draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+      loader.setDRACOLoader(draco);
+      const that = this;
+
+      // Кэш моделей — каждая .glb грузится один раз, потом клонируется.
+      const modelPromises = {};
+      function loadModelCached(path) {
+        if (!modelPromises[path]) {
+          modelPromises[path] = new Promise((resolve, reject) => {
+            loader.load(path, resolve, undefined, reject);
+          });
+        }
+        return modelPromises[path];
+      }
+
+      BUILDINGS_3D.forEach((b) => {
+        loadModelCached(b.model).then(
+          (gltf) => {
+            const obj = gltf.scene.clone(true);
+            // Считаем bounding box
+            const bbox = new THREE.Box3().setFromObject(obj);
+            const size = bbox.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            // масштабируем так, чтобы высота (Y) = b.targetH метров
+            // если модель повёрнута на бок (z больше y), используем максимум
+            const scaleByY = b.targetH / Math.max(size.y, 0.001);
+            const scaleByMax = b.targetH / Math.max(maxDim, 0.001);
+            // используем меньший из коэффициентов (чтобы не получалось гигантское здание)
+            const scale = Math.min(scaleByY * 1.0, scaleByMax * 2.5);
+            const sx = scale * (b.scaleX || 1);
+            const sy = scale * (b.scaleY || 1);
+            const sz = scale * (b.scaleZ || 1);
+            obj.scale.set(sx, sy, sz);
+            // выравниваем bottom на 0
+            const bbox2 = new THREE.Box3().setFromObject(obj);
+            obj.position.x -= (bbox2.max.x + bbox2.min.x) / 2;
+            obj.position.z -= (bbox2.max.z + bbox2.min.z) / 2;
+            obj.position.y -= bbox2.min.y;
+
+            const group = new THREE.Group();
+            group.add(obj);
+
+            // Позиция в three.js scene (метры от ORIGIN_LNGLAT, ось X = восток, Y = высота, Z = -север)
+            const merc = maplibregl.MercatorCoordinate.fromLngLat([b.lng, b.lat], 0);
+            const dx = (merc.x - ORIGIN_MERC.x) / ORIGIN_MERC.meterInMercatorCoordinateUnits();
+            const dz = (merc.y - ORIGIN_MERC.y) / ORIGIN_MERC.meterInMercatorCoordinateUnits();
+            // в Mercator Y растёт на юг (если стандартное Web Mercator), и карта рисует его с pitch 0 как сверху
+            // в three.js нам нужно: X = восток, Y = вверх, Z = юг (right-handed для совпадения)
+            group.position.set(dx, 0, dz);
+            group.rotation.y = b.rotY || 0;
+
+            group.userData = { building: b };
+            obj.traverse((c) => { if (c.isMesh) c.userData.building = b; });
+
+            that.scene.add(group);
+            that.objects.push({ group, b });
+            that.objectsById[b.id] = group;
+            map.triggerRepaint();
+          },
+          (err) => {
+            console.warn('Не удалось загрузить модель', b.model, err);
+            // fallback: цветной куб
+            const geo = new THREE.BoxGeometry(15, b.targetH, 15);
+            const mat = new THREE.MeshStandardMaterial({ color: 0xff6f00 });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.y = b.targetH / 2;
+            const group = new THREE.Group();
+            group.add(mesh);
+            const merc = maplibregl.MercatorCoordinate.fromLngLat([b.lng, b.lat], 0);
+            const dx = (merc.x - ORIGIN_MERC.x) / ORIGIN_MERC.meterInMercatorCoordinateUnits();
+            const dz = (merc.y - ORIGIN_MERC.y) / ORIGIN_MERC.meterInMercatorCoordinateUnits();
+            group.position.set(dx, 0, dz);
+            group.userData = { building: b };
+            mesh.userData.building = b;
+            that.scene.add(group);
+            that.objects.push({ group, b });
+            that.objectsById[b.id] = group;
+            map.triggerRepaint();
+          }
+        );
+      });
+
+      // raycaster для попапов
+      this.raycaster = new THREE.Raycaster();
+    },
+    render: function(gl, matrix) {
+      // Преобразование MapLibre matrix в Three.js camera
+      // Approach: положение origin в Mercator + масштаб + поворот X на 90° (чтобы Y three.js смотрел вверх)
+      const rotX = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+      const m = new THREE.Matrix4().fromArray(matrix);
+      const s = ORIGIN_MERC.meterInMercatorCoordinateUnits();
+      const l = new THREE.Matrix4()
+        .makeTranslation(ORIGIN_MERC.x, ORIGIN_MERC.y, ORIGIN_MERC.z)
+        .scale(new THREE.Vector3(s, -s, s))
+        .multiply(rotX);
+      this.camera.projectionMatrix = m.multiply(l);
+      this.renderer.resetState();
+      this.renderer.render(this.scene, this.camera);
+      // не вызываем triggerRepaint в render — это вызвало бы бесконечный цикл
+    }
+  };
+  map.addLayer(CUSTOM_3D_LAYER);
+
+  // Toggle через чекбокс
+  window.toggle3DBuildings = (visible) => {
+    if (!CUSTOM_3D_LAYER || !CUSTOM_3D_LAYER.scene) return;
+    CUSTOM_3D_LAYER.scene.visible = visible;
+    map.triggerRepaint();
+  };
+
+  // Клики на 3D-здания: используем event клика по карте + raycasting
+  const popup3d = new maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: '280px' });
+  map.on('click', (e) => {
+    if (!CUSTOM_3D_LAYER || !CUSTOM_3D_LAYER.scene || !CUSTOM_3D_LAYER.scene.visible) return;
+    // если клик попал на стандартный слой MapLibre, у MapLibre уже выскочил его попап — не мешаем
+    const features = map.queryRenderedFeatures(e.point);
+    const stdLayer = features.find(f => f.layer && f.layer.id !== 'buildings-3d' && f.layer.id !== 'carto-base' && !f.layer.id.startsWith('districts-'));
+    if (stdLayer) return;
+
+    // Raycasting в three.js
+    const rect = map.getCanvas().getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((e.point.x) / rect.width) * 2 - 1,
+      -((e.point.y) / rect.height) * 2 + 1
+    );
+    const cam = CUSTOM_3D_LAYER.camera;
+    // Сделаем временный PerspectiveCamera — не выйдет, так как у нас projection matrix готовая
+    // Используем хитрость: построим луч из NDC через инверсию projectionMatrix
+    const m = cam.projectionMatrix.clone();
+    const inv = new THREE.Matrix4().copy(m).invert();
+    const near = new THREE.Vector3(mouse.x, mouse.y, -1).applyMatrix4(inv);
+    const far  = new THREE.Vector3(mouse.x, mouse.y,  1).applyMatrix4(inv);
+    const dir = far.clone().sub(near).normalize();
+    CUSTOM_3D_LAYER.raycaster.set(near, dir);
+    const hits = CUSTOM_3D_LAYER.raycaster.intersectObjects(CUSTOM_3D_LAYER.scene.children, true);
+    if (!hits.length) return;
+    let b = null;
+    for (const h of hits) {
+      let o = h.object;
+      while (o) {
+        if (o.userData && o.userData.building) { b = o.userData.building; break; }
+        o = o.parent;
+      }
+      if (b) break;
+    }
+    if (!b) return;
+    const fields = Object.entries(b.props || {}).map(([k, v]) => [k, v]);
+    fields.push(['Координаты', `${b.lng.toFixed(5)}, ${b.lat.toFixed(5)}`]);
+    popup3d.setLngLat([b.lng, b.lat]).setHTML(popupHtml(b.kind, '#FF6F00', b.id, fields)).addTo(map);
+  });
+}
+</script>
+</body>
+</html>
