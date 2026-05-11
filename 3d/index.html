@@ -210,6 +210,27 @@ function initLayers(D, E, P) {
   });
   console.log('[init] districts layer added');
 
+  // маска: перекрывает существующий дом с растровой подложки CARTO
+  // (на этом месте по проекту встаёт МСП-офис, см. BUILDINGS_3D)
+  map.addSource('demolish-mask', {
+    type: 'geojson',
+    data: {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature', properties: { note: 'mask for demolished building' },
+        geometry: { type: 'Polygon', coordinates: [[
+          [39.77683, 47.23546], [39.77723, 47.23546],
+          [39.77723, 47.23562], [39.77683, 47.23562],
+          [39.77683, 47.23546]
+        ]] }
+      }]
+    }
+  });
+  map.addLayer({
+    id: 'demolish-mask-fill', type: 'fill', source: 'demolish-mask',
+    paint: { 'fill-color': '#F2EFE9', 'fill-opacity': 1.0 }
+  });
+
   // свободные территории Пролетарского
   registerGeoJsonFill('free_land', D.free_land,
     { label: 'Свободные территории', color: '#27AE60', group: 'Фокус мастер-плана', visible: false, dash: true });
@@ -217,6 +238,9 @@ function initLayers(D, E, P) {
   // снос
   registerGeoJsonFill('demolish', D.demolish,
     { label: 'Под снос', color: '#C62828', group: 'Мастер-план', visible: false });
+  // граница КРТ
+  if (window.KRT_BORDER_FC) registerGeoJsonLine('krt_border', window.KRT_BORDER_FC,
+    { label: 'Граница КРТ', color: '#B71C1C', group: 'Мастер-план', visible: true, width: 3, dash: true });
   // соц
   registerGeoJsonPoint('schools', D.schools,
     { label: 'Школы', color: '#E91E63', group: 'Социальная сфера', visible: false, radius: 5 });
@@ -324,8 +348,134 @@ function generateParkTiles(D) {
   }
   console.log(`[parks] generated ${count} trees + green fill in СТ Красный Аксай-4`);
 
-  // Второй парк — круг 100 м вокруг (39.77914, 47.23669)
-  addCircularPark(39.77914, 47.23669, 45, 'park-zone-2', 'tree-park2', 28);
+  // (сквер на 39.77914, 47.23669 убран — место занято теннисным кортом и жилыми)
+
+  // Расширение парка по координатам, заданным вручную
+  const PARK_EXT_RING = [
+    [39.78116, 47.23775],
+    [39.78133, 47.23799],
+    [39.78137, 47.23833],
+    [39.78124, 47.23840],
+    [39.78104, 47.23828],
+    [39.78103, 47.23800],
+    [39.78103, 47.23755],
+    [39.78061, 47.23763],
+    [39.78052, 47.23784],
+    [39.78081, 47.23814],
+    [39.78073, 47.23834],
+    [39.78045, 47.23828],
+    [39.78003, 47.23797],
+    [39.77981, 47.23812],
+    [39.78035, 47.23850],
+    [39.78095, 47.23851],
+    [39.78119, 47.23892],
+    [39.78105, 47.23969],
+    [39.78120, 47.24031],
+    [39.78158, 47.24095],
+    [39.78204, 47.24103]
+  ];
+  addCustomPark(PARK_EXT_RING, 'park-zone-ext', 'tree-ext', 140);
+
+  // Перемычка: восточная кромка нового парка (снизу вверх) + западная кромка старого (сверху вниз)
+  const BRIDGE_RING = [
+    [39.78103, 47.23755],
+    [39.78116, 47.23775],
+    [39.78133, 47.23799],
+    [39.78103, 47.23800],
+    [39.78104, 47.23828],
+    [39.78137, 47.23833],
+    [39.78124, 47.23840],
+    [39.78119, 47.23892],
+    [39.78105, 47.23969],
+    [39.78120, 47.24031],
+    [39.78158, 47.24095],
+    [39.78204, 47.24103],
+    [39.78223, 47.24129],
+    [39.78202, 47.24109],
+    [39.78172, 47.23959],
+    [39.78179, 47.23942],
+    [39.78213, 47.23932],
+    [39.78171, 47.23924],
+    [39.78211, 47.23909],
+    [39.78164, 47.23903],
+    [39.78180, 47.23898],
+    [39.78151, 47.23809],
+    [39.78139, 47.23775],
+    [39.78126, 47.23774],
+    [39.78122, 47.23759],
+    [39.78118, 47.23743],
+    [39.78247, 47.23729],
+    [39.78207, 47.23706],
+    [39.78103, 47.23755]
+  ];
+  map.addSource('park-bridge', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [{
+      type: 'Feature', properties: {},
+      geometry: { type: 'Polygon', coordinates: [BRIDGE_RING] }
+    }] }
+  });
+  map.addLayer({
+    id: 'park-bridge-fill', type: 'fill', source: 'park-bridge',
+    paint: { 'fill-color': '#5FAE80', 'fill-opacity': 0.85 }
+  }, 'park-zone-fill');
+}
+
+function addCustomPark(ring, sourceId, idPrefix, treeCount) {
+  // Замыкаем кольцо
+  const closed = ring.slice();
+  if (closed[0][0] !== closed[closed.length-1][0] || closed[0][1] !== closed[closed.length-1][1]) {
+    closed.push(closed[0]);
+  }
+  const feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [closed] } };
+
+  // Заливка + пунктирный контур (как у основного парка)
+  map.addSource(sourceId, { type: 'geojson', data: { type: 'FeatureCollection', features: [feature] } });
+  map.addLayer({
+    id: sourceId + '-fill', type: 'fill', source: sourceId,
+    paint: { 'fill-color': '#5FAE80', 'fill-opacity': 0.85 }
+  });
+  map.addLayer({
+    id: sourceId + '-line', type: 'line', source: sourceId,
+    paint: { 'line-color': '#3F8A60', 'line-width': 1.2, 'line-dasharray': [3, 2] }
+  });
+
+  // bbox для рассеивания точек
+  let minLng=Infinity, maxLng=-Infinity, minLat=Infinity, maxLat=-Infinity;
+  closed.forEach(([x, y]) => {
+    if (x < minLng) minLng = x; if (x > maxLng) maxLng = x;
+    if (y < minLat) minLat = y; if (y > maxLat) maxLat = y;
+  });
+  function inRing(r, x, y) {
+    let inside = false; const n = r.length; let j = n - 1;
+    for (let i = 0; i < n; i++) {
+      const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi)) inside = !inside;
+      j = i;
+    }
+    return inside;
+  }
+  let count = 0, attempts = 0;
+  while (count < treeCount && attempts < treeCount * 8) {
+    attempts++;
+    const lng = minLng + Math.random() * (maxLng - minLng);
+    const lat = minLat + Math.random() * (maxLat - minLat);
+    if (!inRing(closed, lng, lat)) continue;
+    const sizeJitter = 0.7 + Math.random() * 0.7;
+    BUILDINGS_3D.push({
+      id: `${idPrefix}-tree-${count}`,
+      kind: 'Дерево',
+      model: 'models/дерево.glb',
+      lng, lat,
+      rotY: Math.random() * Math.PI * 2,
+      targetH: 5 * sizeJitter,
+      isScene: true,
+      isParkTile: true,
+      props: { 'Тип': 'Дерево' }
+    });
+    count++;
+  }
+  console.log(`[parks] custom park "${sourceId}": ${count} trees placed`);
 }
 
 function addCircularPark(centerLng, centerLat, radiusM, sourceId, idPrefix, tileCount) {
@@ -509,6 +659,25 @@ function registerExtraLayers(E) {
     { label: 'Солнечные панели на крышах', color: '#FDD835', group: 'Инженерная инфра', visible: false, radius: 4 });
   if (window.INFRA_TOILETS_FC) registerGeoJsonPoint('infra_toilets', window.INFRA_TOILETS_FC,
     { label: 'Биотуалеты', color: '#D81B60', group: 'Инженерная инфра', visible: false, radius: 5 });
+  if (window.INFRA_DOG_TOILETS_FC) registerGeoJsonPoint('infra_dog_toilets', window.INFRA_DOG_TOILETS_FC,
+    { label: 'Туалеты для собак', color: '#FF6F00', group: 'Зелёный каркас', visible: false, radius: 9 });
+  if (window.DOG_ZONE_FC) {
+    map.addSource('dog_zone', { type: 'geojson', data: window.DOG_ZONE_FC });
+    map.addLayer({
+      id: 'dog_zone-fill', type: 'fill', source: 'dog_zone',
+      paint: { 'fill-color': '#000000', 'fill-opacity': 0.06 },
+      layout: { visibility: 'none' }
+    });
+    map.addLayer({
+      id: 'dog_zone-line', type: 'line', source: 'dog_zone',
+      paint: { 'line-color': '#000000', 'line-width': 2.2, 'line-opacity': 0.9 },
+      layout: { visibility: 'none' }
+    });
+    LAYERS['dog_zone'] = {
+      label: 'Зона для собак', color: '#000000', group: 'Зелёный каркас',
+      visible: false, count: 1, mlIds: ['dog_zone-fill', 'dog_zone-line']
+    };
+  }
   if (window.INFRA_TOWER_FC) registerGeoJsonPoint('infra_tower', window.INFRA_TOWER_FC,
     { label: 'Телеком-вышка (на иннов. центре)', color: '#FF6F00', group: 'Цифровизация', visible: false, radius: 9 });
 
@@ -742,6 +911,7 @@ function attachPopups(D) {
     'infra_trash-circle':    () => popupHtml('Контейнер', '#212121', 'Мусорный контейнер / площадка ТКО', []),
     'infra_solar-circle':    () => popupHtml('Солнечная панель', '#FDD835', 'Фотоэлектрическая панель на крыше', []),
     'infra_toilets-circle':  () => popupHtml('Биотуалет', '#D81B60', 'Модульный биотуалет', []),
+    'infra_dog_toilets-circle': () => popupHtml('Туалет для собак', '#795548', 'Площадка для выгула / туалет для собак', []),
     'infra_tower-circle':    p => popupHtml('Телеком-вышка', '#FF6F00', p.name, []),
     'infra_crosswalks-line': () => popupHtml('Пешеходный переход', '#FFFFFF', 'Зебра (проект)', []),
     'infra_bike_loop-line':  p => popupHtml('Велодорожка', '#E53935', p.name || 'Кольцевая (проект)', []),
@@ -791,39 +961,39 @@ function popupHtml(chipText, chipColor, title, fields) {
 // Координаты по скетчу пользователя — Берберовка, квартал между ул. Рябышева и ул. Черевичкина
 const BUILDINGS_3D = [
   { id: 'жилой-1', kind: 'Жилой дом', model: 'models/жилой.glb',
-    lng: 39.77586, lat: 47.23740, rotY: Math.PI / 2 - 0.32, targetH: 15, scaleX: 2.4, scaleZ: 1.1,
+    lng: 39.77884, lat: 47.23689, rotY: Math.PI / 2 - 0.32, targetH: 15, scaleX: 2.4, scaleZ: 1.1,
     props: { 'Этажность': '4 этажа', 'Тип': 'Современный жилой дом' } },
   { id: 'жилой-2', kind: 'Жилой дом', model: 'models/жилой.glb',
-    lng: 39.77633, lat: 47.23724, rotY: Math.PI / 2 - 1.10, targetH: 15, scaleX: 2.4, scaleZ: 1.9,
+    lng: 39.77952, lat: 47.23681, rotY: Math.PI / 2 - 1.10, targetH: 15, scaleX: 2.4, scaleZ: 1.9,
     props: { 'Этажность': '4 этажа', 'Тип': 'Современный жилой дом' } },
   { id: 'производство', kind: 'Производство', model: 'models/производство.glb',
     lng: 39.77673, lat: 47.23542, rotY: 0, targetH: 18,
     props: { 'Этажность': '2 этажа', 'Тип': 'Производственное помещение' } },
-  { id: 'офис', kind: 'МСП-офис', model: 'models/офис.glb',
-    lng: 39.77772, lat: 47.23594, rotY: Math.PI, targetH: 16.5,
-    props: { 'Этажность': '3 этажа', 'Тип': 'Отдельное офисное здание' } },
   { id: 'остановка', kind: 'Остановка', model: 'models/автобусная остановка.glb',
     lng: 39.77712, lat: 47.23531, rotY: 0.349, targetH: 3.5,
     props: { 'Тип': 'Остановочный павильон' } },
   { id: 'инновационный', kind: 'Инновационный центр', model: 'models/инновационная.glb',
-    lng: 39.78048, lat: 47.23841, rotY: 0, targetH: 14,
+    lng: 39.78167, lat: 47.23858, rotY: 0, targetH: 14,
     props: { 'Этажность': '3 этажа', 'Тип': 'Бесплатный инновационный центр (фьюжн)' } },
   { id: 'мфкдц', kind: 'МФКДЦ', model: 'models/мфкдц.glb',
     lng: 39.77563, lat: 47.23638, rotY: Math.PI / 12, targetH: 12,
     props: { 'Тип': 'Многофункциональный культурно-досуговый центр',
              'Содержит': 'библиотека + кружки/ДШИ + клубный зал + коворкинг' } },
   { id: 'теннис', kind: 'Теннисный корт', model: 'models/теннис.glb',
-    lng: 39.77871, lat: 47.23610, rotY: 0, targetH: 8,
+    lng: 39.77914, lat: 47.23643, rotY: 0, targetH: 8,
     props: { 'Тип': 'Спортивная площадка / теннисный корт' } },
   { id: 'школа', kind: 'Школа', model: 'models/школа.glb',
-    lng: 39.77701, lat: 47.23869, rotY: 0, targetH: 28,
+    lng: 39.77805, lat: 47.23624, rotY: 0, targetH: 28,
     props: { 'Тип': 'Школа', 'Этажность': '3 этажа' } },
   { id: 'остановка-1', kind: 'Остановка', model: 'models/автобусная остановка.glb',
     lng: 39.78011, lat: 47.23665, rotY: Math.PI / 6, targetH: 3.5,
     props: { 'Тип': 'Автобусная остановка (северная сторона)' } },
   { id: 'остановка-2', kind: 'Остановка', model: 'models/автобусная остановка.glb',
     lng: 39.77917, lat: 47.23597, rotY: Math.PI + Math.PI / 6, targetH: 3.5,
-    props: { 'Тип': 'Автобусная остановка (южная сторона)' } }
+    props: { 'Тип': 'Автобусная остановка (южная сторона)' } },
+  { id: 'офис-2', kind: 'МСП-офис', model: 'models/офис.glb',
+    lng: 39.77703, lat: 47.23554, rotY: 0, targetH: 16.5,
+    props: { 'Этажность': '3 этажа', 'Тип': 'Офис МСП (на месте снесённого здания)' } }
 ];
 window.PROL_3D_BUILDINGS = BUILDINGS_3D;
 
@@ -856,6 +1026,13 @@ const INFRA_SOLAR = [
 const INFRA_TOILETS = [
   [39.77701,47.23862],[39.776,47.23735],[39.77563,47.2365],[39.7786,47.23615],[39.7775,47.238]
 ];
+// Туалеты для собак — в парке СТ Красный Аксай-4
+const INFRA_DOG_TOILETS = [
+  [39.78325, 47.23845],
+  [39.78384, 47.23812],
+  [39.78359, 47.23760],
+  [39.78300, 47.23793]
+];
 function _arrToFc(arr) {
   return { type: 'FeatureCollection', features: arr.map(([x, y]) => ({
     type: 'Feature', geometry: { type: 'Point', coordinates: [x, y] }, properties: {}
@@ -865,6 +1042,52 @@ window.INFRA_DRAINS_FC  = _arrToFc(INFRA_DRAINS);
 window.INFRA_TRASH_FC   = _arrToFc(INFRA_TRASH);
 window.INFRA_SOLAR_FC   = _arrToFc(INFRA_SOLAR);
 window.INFRA_TOILETS_FC = _arrToFc(INFRA_TOILETS);
+window.INFRA_DOG_TOILETS_FC = _arrToFc(INFRA_DOG_TOILETS);
+
+// Граница КРТ — обозначение, без замыкания и без заливки
+window.KRT_BORDER_FC = {
+  type: 'FeatureCollection',
+  features: [{
+    type: 'Feature',
+    properties: { name: 'Граница КРТ' },
+    geometry: {
+      type: 'LineString',
+      coordinates: [
+        [39.78110, 47.23891],
+        [39.77904, 47.23822],
+        [39.77811, 47.23722],
+        [39.77453, 47.23644],
+        [39.77498, 47.23591],
+        [39.77612, 47.23601],
+        [39.77657, 47.23508],
+        [39.77730, 47.23529],
+        [39.77942, 47.23615],
+        [39.78092, 47.23702],
+        [39.78221, 47.23697]
+      ]
+    }
+  }]
+};
+
+// Зона для собак — чёрный контур, охватывающий 4 туалета
+window.DOG_ZONE_FC = (function () {
+  const cx = 39.78342, cy = 47.238025;
+  const a = 0.00055, b = 0.00055;
+  const N = 48;
+  const ring = [];
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    ring.push([cx + Math.cos(t) * a, cy + Math.sin(t) * b]);
+  }
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: { name: 'Зона для собак' },
+      geometry: { type: 'Polygon', coordinates: [ring] }
+    }]
+  };
+})();
 
 // ===== Пешеходные переходы (зебра) =====
 function _makeCrosswalk(cLng, cLat, orient, stripes = 6, lengthM = 6, gapM = 1.0, rotateDeg = 0) {
@@ -898,7 +1121,7 @@ window.INFRA_TOWER_FC = {
   type: 'FeatureCollection',
   features: [{
     type: 'Feature',
-    geometry: { type: 'Point', coordinates: [39.78048, 47.23841] },
+    geometry: { type: 'Point', coordinates: [39.78167, 47.23858] },
     properties: { name: 'Базовая станция / вышка связи (на крыше Инновационного центра)' }
   }]
 };
